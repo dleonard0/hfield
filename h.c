@@ -88,9 +88,15 @@ strlcat(char *d, const char *s, size_t dsz)
 }
 #endif
 
-int verbose_level = 0;
-#define verbose(...)  do { if (verbose_level)   fprintf(stderr, __VA_ARGS__); } while (0)
-#define verbose2(...) do { if (verbose_level>1) fprintf(stderr, __VA_ARGS__); } while (0)
+#ifndef NDEBUG
+static int verbose_level = 0;
+# define verbose(...)  do { if (verbose_level)   fprintf(stderr, __VA_ARGS__); } while (0)
+# define verbose2(...) do { if (verbose_level>1) fprintf(stderr, __VA_ARGS__); } while (0)
+#else
+# define verbose_level 0
+# define verbose(...)
+# define verbose2(...)
+#endif
 
 /* Convert an angle in microdegrees into a strict string form */
 static const char *
@@ -143,7 +149,8 @@ vector_wedge(const vector a, const vector b) {		/* a^b */
 	return a.x * b.y - a.y * b.x;
 }
 
-static const char *
+#ifndef NDEBUG
+static const char *		/* representative form for debug */
 vector_str(const vector a) {
 	static char buf[1024];
 	snprintf(buf, sizeof buf, "<%s,%s,",
@@ -153,8 +160,9 @@ vector_str(const vector a) {
 	buf[sizeof buf - 1] = '\0';
 	return buf;
 }
+#endif
 
-static const char *
+static const char *				/* for DrawTools */
 vector_json(const vector a) {
 	static char buf[1024];
 	snprintf(buf, sizeof buf, "{\"lat\":%s,\"lng\":", angle_str(a.x));
@@ -545,6 +553,7 @@ hfield_free(struct hfield *h)
 	free(h);
 }
 
+#ifndef NDEBUG
 __attribute__((sentinel))
 static const char *
 polygon_json(const vector *v1, ...)
@@ -564,6 +573,7 @@ polygon_json(const vector *v1, ...)
 	strlcat(buf, "]}", sizeof buf);
 	return buf;
 }
+#endif
 
 static void
 print_solution(const struct hfield *h)
@@ -603,14 +613,14 @@ rsearch(unsigned int const i, struct hfield *h)
 	const vector c = tri[i].v[2];
 	const vset *inner = tri[i].inner;
 
-        verbose2("%*srsearch(%u,) tri[%u]={%.10s,%.10s,%.10s",i,"",i,i,
-                a.name, b.name, c.name);
-        if (inner) {
-                verbose2(",inner=[");
-                for (unsigned l = 0; l < inner->len; l++)
-                        verbose2("%s%.10s", l ? "," : "", inner->el[l].name);
-                verbose2("]");
-        }
+	verbose2("%*srsearch(%u,) tri[%u]={%.10s,%.10s,%.10s",i,"",i,i,
+		a.name, b.name, c.name);
+	if (verbose_level && inner) {
+		verbose2(",inner=[");
+		for (unsigned l = 0; l < inner->len; l++)
+			verbose2("%s%.10s", l ? "," : "", inner->el[l].name);
+		verbose2("]");
+	}
 	verbose2("} min_interior[%u]=%u\n", i, min_interior[i]);
 
 	if (!min_interior[i]) {
@@ -709,7 +719,11 @@ main(int argc, char *argv[])
 			}
 			break;
 		case 'v':
+#ifndef NDEBUG
 			verbose_level++;
+#else
+			warnx("verbose not supported (NDEBUG)");
+#endif
 			break;
 		default:
 			error = 1;
