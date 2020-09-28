@@ -103,6 +103,7 @@ static const char *
 angle_str(long a /* µ° */) {
 	static char buf[32];
 	unsigned int len = 0;
+
 	if (a < 0) {
 		buf[len++] = '-';
 		a = -a;
@@ -153,6 +154,7 @@ vector_wedge(const vector a, const vector b) {		/* a^b */
 static const char *		/* representative form for debug */
 vector_str(const vector a) {
 	static char buf[1024];
+
 	snprintf(buf, sizeof buf, "<%s,%s,",
 		a.name ? a.name : "", angle_str(a.x));
 	strlcat(buf, angle_str(a.y), sizeof buf);
@@ -165,6 +167,7 @@ vector_str(const vector a) {
 static const char *				/* for DrawTools */
 vector_json(const vector a) {
 	static char buf[1024];
+
 	snprintf(buf, sizeof buf, "{\"lat\":%s,\"lng\":", angle_str(a.x));
 	strlcat(buf, angle_str(a.y), sizeof buf);
 	strlcat(buf, "}", sizeof buf);
@@ -183,8 +186,7 @@ tri_area(const vector tri[static 3])
 
 	vector ab = vector_sub(tri[1], tri[0]);
 	vector bc = vector_sub(tri[2], tri[1]);
-	/* Do calculation in floating because of overflow */
-	return -5e-7*ab.x*bc.y + 5e-7*ab.y*bc.x;
+	return -0.5e-6 * vector_wedge(ab, bc);
 }
 
 /*------------------------------------------------------------
@@ -209,6 +211,7 @@ vset_setcap(vset **v, unsigned int newcap)
 static vset *
 vset_new(void) {
 	vset *ret = NULL;
+
 	vset_setcap(&ret, 0); /* allocates! */
 	ret->len = 0;
 	return ret;
@@ -236,11 +239,6 @@ vset_append(vset **vp, const vector v) {
 	return true;
 }
 
-#define VSET_FOREACH(v, vs) \
-	for (const vector *_p_##v = &(vs)->el[0]; \
-	     _p_##v < &(vs)->el[(vs)->len] ? (v = *_p_##v), 1 : 0; \
-	     _p_##v++)
-
 /*------------------------------------------------------------
  * CSV file reading
  * Comma-separated value files have lines of fields separated by
@@ -254,6 +252,7 @@ csv_string_field(char **sp) {
 	static char buf[1024];
 	unsigned int len = 0;
 	_Bool inquote = false;
+
 	for (s = *sp; *s && (inquote || *s != ','); s++) {
 		if (*s != '"') {
 			if (len < sizeof buf - 2)
@@ -330,15 +329,15 @@ static vset *
 read_csv(FILE *f, const char *filename)
 {
 	vset *result = vset_new();
-
 	size_t linesz = 0;
 	ssize_t n;
 	char *line = NULL;
 	unsigned int lineno = 0;
+
 	while ((n = getline(&line, &linesz, f)) >= 0) {
 		++lineno;
-		/* skip first line */
-		if (lineno == 1)
+		/* skip heading line */
+		if (lineno == 1 && strncmp(line, "Name,", 5) == 0)
 			continue;
 
 		/* Remove trailing newline */
@@ -390,17 +389,17 @@ vset_left_of(const vector a, const vector b, const vset *v)
 	vset *result = vset_new();
 	const vector ab = vector_sub(b, a);
 
-        verbose2("vset_left_of(%.10s,%.10s,<%u>) = [", a.name, b.name, v->len);
-        assert(ab.x || ab.y); /* same as assert(a != b) */
+	verbose2("vset_left_of(%.10s,%.10s,<%u>) = [", a.name, b.name, v->len);
+	assert(ab.x || ab.y); /* same as assert(a != b) */
 
 	for (unsigned i = 0; i < v->len; i++) {
 		const vector ap = vector_sub(v->el[i], a);
 		if (is_leftward(ab, ap)) {
-                        verbose2("%s%.10s", result->len?",":"", v->el[i].name);
+			verbose2("%s%.10s", result->len?",":"", v->el[i].name);
 			vset_append(&result, v->el[i]);
-                }
+		}
 	}
-        verbose2("]\n");
+	verbose2("]\n");
 	return result;
 }
 
@@ -413,20 +412,24 @@ struct tri_generator {
 	const vset *vs;
 	vset *inside;
    /* private: */
+	_Bool ji;
 	unsigned int i, j;	/* 0 <= i < j < |vs| */
-	unsigned int k;		/* 0 <= k < |ijleft| */
+	unsigned int k;		/* 0 <= k < |ji?jileft:ijleft| */
 	vset *ijleft;		/* points left of i->j */
+	vset *jileft;		/* points left of j->i */
 };
 
 static void
 tri_generator_init(struct tri_generator *gen, const vset *vs)
 {
 	gen->vs = vs;
-	gen->i = 0;		/* triggers new loop */
-	gen->j = 0;
+	gen->i = 0;
+	gen->j = 0; /* will increment early to j=1 */
 	gen->k = 0;
+	gen->ji = true;
+	gen->ijleft = vset_new();
+	gen->jileft = vset_new();
 	gen->inside = NULL;
-	gen->ijleft = NULL;
 }
 
 /* Generates the next unique triangle, and its
@@ -448,31 +451,60 @@ static _Bool
 tri_generator_next(struct tri_generator * restrict gen, vector ret[static 3]) {
 	const vector *el = gen->vs->el;
 	const unsigned int len = gen->vs->len;
-	if (len < 3)
-		return false;
-	vset_free(gen->inside); gen->inside = NULL;
-	if (!gen->ijleft || ++gen->k == gen->ijleft->len) {
-nextj:
-		vset_free(gen->ijleft); gen->ijleft = NULL;
-                if (++gen->j == gen->i)
-                        ++gen->j;
-                if (gen->j == len) {
-                        gen->j = 0;
-                        if (++gen->i == len)
-                                return false;
-                }
-		gen->ijleft = vset_left_of(el[gen->i], el[gen->j], gen->vs);
-		if (gen->ijleft->len == 0)
-			goto nextj;
+	vset *kset = gen->ji ? gen->jileft : gen->ijleft;
+
+	if (gen->i == len)
+		goto done;
+
+	while (gen->k == kset->len) {
 		gen->k = 0;
+		if (!gen->ji) {
+			gen->ji = true;
+			kset = gen->jileft;
+			continue;
+		}
+
+		if (++gen->j == len - 1) {
+			if (++gen->i == len - 2)
+				goto done;
+			gen->j = gen->i + 1;
+		}
+
+		/* partition [j+1..len] into left and right of ij */
+		vset_clear(&gen->ijleft);
+		vset_clear(&gen->jileft);
+		vector ij = vector_sub(el[gen->j], el[gen->i]);
+		for (unsigned k = gen->j + 1; k < len; k++) {
+			vector ik = vector_sub(el[k], el[gen->i]);
+			vset_append(is_leftward(ij, ik) ? &gen->ijleft : &gen->jileft, el[k]);
+		}
+		gen->ji = false;
+		kset = gen->ijleft;
 	}
-	vset *ijksect = vset_left_of(el[gen->j], gen->ijleft->el[gen->k], gen->ijleft);
-	gen->inside = vset_left_of(gen->ijleft->el[gen->k], el[gen->i], ijksect);
-	vset_free(ijksect);
-	ret[0] = el[gen->i];
-	ret[1] = el[gen->j];
-	ret[2] = gen->ijleft->el[gen->k];
+
+	if (!gen->ji) {
+		ret[0] = el[gen->i];
+		ret[1] = el[gen->j];
+	} else {
+		ret[0] = el[gen->j];
+		ret[1] = el[gen->i];
+	}
+	ret[2] = kset->el[gen->k];
+
+	vset_free(gen->inside);
+	vset *tmp = vset_left_of(ret[1], ret[2], kset);
+	gen->inside = vset_left_of(ret[2], ret[0], tmp);
+	vset_free(tmp);
+
+	gen->k++;
 	return true;
+
+done:
+	vset_free(gen->ijleft); gen->ijleft = NULL;
+	vset_free(gen->jileft); gen->jileft = NULL;
+	vset_free(gen->inside); gen->inside = NULL;
+	gen->i = len;
+	return false;
 }
 
 /*------------------------------------------------------------
@@ -502,7 +534,9 @@ struct hfield {
 static unsigned int maxtri(unsigned int depth)
 {
 	unsigned int ret = 1;
-	while (depth--) ret *= 3;
+
+	while (depth--)
+		ret *= 3;
 	return (ret - 1)/2;
 }
 
@@ -530,7 +564,9 @@ hfield_new(unsigned int depth,
 {
 	unsigned i;
 	unsigned int ntri = maxtri(depth);
-	struct hfield *h = malloc(sizeof *h + ntri * sizeof h->tri[0]);
+	struct hfield *h;
+
+	h = malloc(sizeof *h + ntri * sizeof h->tri[0]);
 	if (!h)
 		err(1, "malloc");
 	h->ntri = ntri;
@@ -548,9 +584,11 @@ hfield_new(unsigned int depth,
 static void
 hfield_free(struct hfield *h)
 {
-	for (unsigned i = 0; i < h->ntri; i++)
-		vset_free(h->tri[i].inner);
-	free(h);
+	if (h) {
+		for (unsigned i = 0; i < h->ntri; i++)
+			vset_free(h->tri[i].inner);
+		free(h);
+	}
 }
 
 #ifndef NDEBUG
@@ -602,7 +640,7 @@ print_solution(const struct hfield *h)
  * The general process is to try each inner vertex as
  * a splitting vertex; the three sub-tris' inners are
  * computed and assigned.
- * Always recurses on i+1 so that all combinations are tried
+ * Recurses on i+1 so that all split choices are tried.
  */
 static _Bool
 rsearch(unsigned int const i, struct hfield *h)
@@ -627,9 +665,8 @@ rsearch(unsigned int const i, struct hfield *h)
 		/* We have reached the first H1 subtri. Because all previous i
 		 * must have been H2 (with non-zero min_interior), they would
 		 * have set all their sub H1s up correctly. So tri[] is complete,
-		 * and we have a solution. We can also deduce the size of the
-		 * complete tri[] from the index of the first H1. */
-		return true; /* terminate now */
+		 * and we have a solution. */
+		return true; /* terminate the chain of rsearch() now */
 	}
 
 	/* Allocate space for three sub triangles */
@@ -640,12 +677,15 @@ rsearch(unsigned int const i, struct hfield *h)
 	mbc->v[1] = b; mbc->v[2] = c;
 	mca->v[1] = c; mca->v[2] = a;
 	for (unsigned mi = 0; mi < inner->len; mi++) {
-		/* For each interior point m, we'll say that is the splitting
-		 * point for the triangle ABC into {MAB, MBC, MCA} */
+		/* Try each interior point m as the splitting
+		 * point for the triangle ABC. That is we form
+		 * sub-triangles MAB, MBC, MCA */
 		vector m = inner->el[mi];
 
-		/* For ABC that is H3+, divide its inner vset
-		 * into the inner vsets of H2+ subtris MAB,MBC,MCA */
+		/* For an ABC that is H3+, divide its inner vset
+		 * into the inner vsets of H2+ subtris MAB,MBC,MCA.
+		 * We'll distribute the results to the appropriate
+		 * subtris' inners. */
 		if (min_interior[i] > 1) {
 			vector ma = vector_sub(a, m);
 			vector mb = vector_sub(b, m);
@@ -683,23 +723,14 @@ rsearch(unsigned int const i, struct hfield *h)
 			}
 		}
 
-		/* Set up the three interior tries, so that they
-		 * are mab, mbc, mca */
+		/* Complete the three interior triangles MAB, MBC, MCA */
 		mab->v[0] = mbc->v[0] = mca->v[0] = m;
 
-		/* Now we can recurse! */
+		/* Now we can recurse! (Usually to a sibling sometimes to a descendent tri) */
 		if (rsearch(i + 1, h))
-			return true; /* stop when one found */
+			return true; /* stop when solution found */
 	}
 	return false; /* no solutions */
-}
-
-static void
-search(struct hfield *h)
-{
-	if (rsearch(0, h))
-		print_solution(h);
-	hfield_free(h);
 }
 
 int
@@ -767,27 +798,40 @@ main(int argc, char *argv[])
 	/* Iterate over all triangles in the set just loaded */
 	struct tri_generator gen;
 	tri_generator_init(&gen, vs);
-	vector bound[3];
-	while (tri_generator_next(&gen, bound)) {
-		static unsigned int last_i = 0;
-		if (last_i != gen.i) {
-			last_i = gen.i;
-			verbose("progress: %u/%u\n", gen.i, vs->len);
+
+	_Bool more;
+#pragma omp parallel private(more)
+	do {
+		struct hfield *h = NULL;
+
+#pragma omp critical
+		{
+			vector bound[3];
+			more = tri_generator_next(&gen, bound);
+			if (more) {
+				if (verbose_level) {
+					verbose("%u/%u/%u:\n", gen.i, gen.j, gen.k);
+					verbose("  <%.16s,%.16s,%.16s>\n", bound[0].name, bound[1].name, bound[2].name);
+					verbose2("  %s\n", polygon_json(&bound[0], &bound[1], &bound[2], NULL));
+					verbose2("  inside: %u [", gen.inside->len);
+					for (unsigned l = 0; l < gen.inside->len; l++)
+						verbose2("%s%.16s", l ? "," : "", gen.inside->el[l].name);
+					verbose2("]\n");
+				}
+				if (gen.inside->len >= min_interior[0]) {
+					h = hfield_new(depth, bound[0], bound[1], bound[2], gen.inside);
+					gen.inside = NULL; /* because now h 'owns' it */
+				}
+			}
 		}
 
-		verbose2("%u/%u/%u:\n", gen.i, gen.j, gen.k);
-		verbose2("  <%.16s,%.16s,%.16s>\n", bound[0].name, bound[1].name, bound[2].name);
-		verbose2("  %s\n", polygon_json(&bound[0], &bound[1], &bound[2], NULL));
-		verbose2("  inside: %u [", gen.inside->len);
-		for (unsigned l = 0; l < gen.inside->len; l++)
-			verbose2("%s%.16s", l ? "," : "", gen.inside->el[l].name);
-		verbose2("]\n");
+		if (h) {
+			if (rsearch(0, h)) {
+#pragma				omp critical
+				print_solution(h);
+			}
+			hfield_free(h);
+		}
+	} while (more);
 
-		if (gen.inside->len < min_interior[0])
-			continue;
-
-		struct hfield *h = hfield_new(depth, bound[0], bound[1], bound[2], gen.inside);
-		gen.inside = NULL; /* because now h 'owns' it */
-		search(h);
-	}
 }

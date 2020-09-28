@@ -1,0 +1,31 @@
+#!/bin/bash
+
+set -ex
+
+# Find exactly one triangle; exercise edge cases of numbers
+./h -d 1 - <<'.' |
+"A",-180.000000,89.999999
+"B",0,-90.000000,foo
+"C",179.999999,-.5
+.
+diff -u <(cat<<'.'
+Found solution, area: 24254999820.000000
+[{"type":"polygon","latLngs":[{"lat":0,"lng":-90},{"lat":-180,"lng":89.999999},{"lat":179.999999,"lng":-0.5}],"color":"#a24ac3"}]
+.
+) - 
+
+
+# Find exactly the four triangles from four points
+./h -d 1 - <<'.' | grep '^\[' | sort |
+"A",1,2
+"B",2,2
+"C",1,1
+"D",2,1
+.
+diff -u <(cat<<'.'
+[{"type":"polygon","latLngs":[{"lat":1,"lng":1},{"lat":1,"lng":2},{"lat":2,"lng":1}],"color":"#a24ac3"}]
+[{"type":"polygon","latLngs":[{"lat":1,"lng":1},{"lat":2,"lng":2},{"lat":2,"lng":1}],"color":"#a24ac3"}]
+[{"type":"polygon","latLngs":[{"lat":1,"lng":2},{"lat":2,"lng":2},{"lat":1,"lng":1}],"color":"#a24ac3"}]
+[{"type":"polygon","latLngs":[{"lat":1,"lng":2},{"lat":2,"lng":2},{"lat":2,"lng":1}],"color":"#a24ac3"}]
+.
+) -

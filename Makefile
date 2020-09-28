@@ -1,13 +1,21 @@
 
 CFLAGS += -g
-CFLAGS += -O
 CFLAGS += -Wall
+
+ifdef OPENMP
+  CFLAGS += -O
+  CFLAGS += -fopenmp
+else
+  CFLAGS += -Wno-unknown-pragmas
+endif
 
 ifdef NDEBUG
   CPPFLAGS += -DNDEBUG
 endif
 
-default: h
+default: check
 
+check: h t-h
+	$(abspath t-h)
 clean:
 	rm -f h
