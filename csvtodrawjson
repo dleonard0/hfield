@@ -1,6 +1,8 @@
 #!/usr/bin/gawk -f
-BEGIN { FS=","; print "["; }
-NR==1 { next }
-NR>2  { printf(","); }
-      { print "{\"type\":\"marker\",\"latLng\":{\"lat\":" $2 ",\"lng\":" $3 "},\"color\":\"#a24ac3\"}"; }
+# Convert a CSV portal file into an IITC drawtools set of markers
+BEGIN { FS=","; printf("["); }
+NR==1 && /^Name/ { next }
+{ if (tail) printf(","); else tail = 1;
+  printf("{\"type\":\"marker\",\"latLng\":{\"lat\":%s,\"lng\":%s},\"color\":\"#a24ac3\"}", $2, $3);
+}
 END { print "]" }
