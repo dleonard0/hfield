@@ -1,5 +1,6 @@
 <!doctype html>
 <html>
+<!-- A standalone tool to inspect portal CSVs and JSON polygons -->
 <head>
 <meta charset="utf-8">
 <title>CSV viewer</title>
@@ -19,7 +20,8 @@
 
 <script>
 
-function render(text) {
+/* redraw #canvas from the content of the #csv and #json inputs */
+function render() {
         var canvas = document.getElementById("canvas");
         var c = canvas.getContext("2d");
 
