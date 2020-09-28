@@ -1,0 +1,168 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>CSV viewer</title>
+<style>
+   #csv { vertical-align: top; }
+   #canvas { border: thin solid red; }
+   #csv { border: thin solid green; }
+</style>
+<body>
+<canvas id="canvas" width=1000 height=800></canvas>
+<div style="display: inline; vertical-align: top">
+  <label>CSV:
+  <textarea id="csv" cols=50 rows=50 title="Paste CSV here"></textarea>
+  <label>JSON
+  <textarea id="json" cols=50 rows=50 title="Paste JSON here"></textarea>
+</div>
+
+<script>
+
+function render(text) {
+        var canvas = document.getElementById("canvas");
+        var c = canvas.getContext("2d");
+
+        var csvtext = document.getElementById("csv").value;
+
+        //"ocbb",-27.503927,153.174900,"",0
+        let rows = csvtext.split(/\n/).map(line=> {
+            try {
+                // CSV field parsing is not triviasl
+                let fields = [];
+                while (line) {
+                        var field = "";
+                        while (line && !line.startsWith(",")) {
+                                let closeq = line.indexOf("\"",1);
+                                if (line.startsWith("\"") && closeq != -1) {
+                                    field = field + line.substr(1,closeq-1);
+                                    line = line.substr(closeq+1)
+                                } else {
+                                    let m = line.match(/^[^,"]*/); 
+                                    field = field + m[0];
+                                    line = line.substr(m[0].length)
+                                }
+                        }
+                        fields.push(field);
+                        if (line) line = line.substr(1);
+                }
+                // convert the fields into a plain-old object
+                if (fields.length < 3) return undefined;
+                let name = fields[0].replace(/^"/,"").replace(/"$/,"");
+                return {"name":name,"lat":Number(fields[1]), "lng":Number(fields[2])}
+            } catch {
+                return undefined
+            }
+        }).filter(o => (o && !isNaN(o.lat) && !isNaN(o.lng)));
+        console.log(rows)
+
+        // find the bounding box
+        bound = rows.reduce((acc,row)=>{
+                if (row.lat < acc.minLat) acc.minLat = row.lat;
+                if (row.lng < acc.minLng) acc.minLng = row.lng;
+                if (row.lat > acc.maxLat) acc.maxLat = row.lat;
+                if (row.lng > acc.maxLng) acc.maxLng = row.lng;
+                return acc;
+        },{minLat:Infinity, minLng:Infinity, maxLat:-Infinity, maxLng:-Infinity})
+        console.log(bound)
+
+        let dLat = bound.maxLat - bound.minLat;
+        let dLng = bound.maxLng - bound.minLng;
+        let lcentre = {lat: bound.minLat + dLat/2,
+                       lng: bound.minLng + dLng/2 }
+        var scale = canvas.width / dLng;
+
+        const ccentre = { x:canvas.width/2, y:canvas.height/2 };
+        if (dLat * scale > canvas.height)
+            scale = canvas.height / dLat;
+        scale *= 0.95;
+
+        let objs = rows.map(row => {
+           return { x: (row.lng - lcentre.lng) * scale + ccentre.x,
+                    y: (row.lat - lcentre.lat) * -scale + ccentre.y,
+                    name: row.name }
+        })
+
+        c.clearRect(0, 0, canvas.width, canvas.height);
+        c.lineWidth = 1;
+
+        c.save();
+            c.fillStyle = 'rgba(0,0,0,0.5)';
+            for (const o of objs) {
+                if (o.name) {
+                    let m = c.measureText(o.name);
+                    c.fillText(o.name, o.x - m.width/2, o.y + 20);
+                }
+            }
+        c.restore();
+
+        c.save();
+            c.fillStyle = 'rgba(0,0,0,0.5)'
+            c.strokeStyle = 'orange'
+            c.lineWidth = 3;
+            for (const o of objs) {
+                c.beginPath();
+                c.arc(o.x,o.y, 8, 0,Math.PI*2);
+                c.fill()
+                c.stroke()
+            }
+        c.restore();
+
+        var json;
+        try { json = JSON.parse(document.getElementById("json").value); }
+        catch { json = null; }
+        if (json) {
+	    if (!Array.isArray(json))
+	    	json = [json];
+            c.save();
+                c.fillStyle = 'rgba(60,20,70,0.3)'
+                c.strokeStyle = '#a24ac3';
+                c.lineWidth = 2;
+                const toxy = (ll => {
+                        return { x: (ll.lng - lcentre.lng) * scale + ccentre.x,
+                                 y: (ll.lat - lcentre.lat) * -scale + ccentre.y }
+                });
+                for (jel of json) {
+                        if (jel.type != "polygon") continue;
+                        // convert to x,y
+                        var points = jel.latLngs.map(toxy)
+                        // find centroid point
+                        var cp = { x: 0, y: 0 };
+                        for (let p of points) {
+                            cp.x += p.x / points.length;
+                            cp.y += p.y / points.length;
+                        }
+                        // pull every point towards the entroid by 3 pixels
+                        var squeeze_points = points.map(p => {
+                            let dcp = { x: cp.x - p.x,
+                                        y: cp.y - p.y };
+                            let d = Math.sqrt(dcp.x*dcp.x + dcp.y*dcp.y);
+                            const INSET = 1;
+                            if (d < INSET)
+                                return cp;
+                            return { x: p.x + dcp.x*INSET/d,
+                                     y: p.y + dcp.y*INSET/d }
+                        })
+
+                        c.beginPath();
+                        var first = true;
+                        for (p of squeeze_points) {
+                                if (first) { c.moveTo(p.x, p.y); first = false; }
+                                else       { c.lineTo(p.x, p.y); }
+                        }
+                        c.closePath();
+                        c.fill();
+                        //c.stroke();
+                }
+            c.restore();
+        }
+
+}
+
+document.getElementById("csv") .addEventListener("input", (e)=>{ render(); false; });
+document.getElementById("json").addEventListener("input", (e)=>{ render(); false; });
+render();
+
+</script>
+
+</body>

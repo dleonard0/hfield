@@ -1,0 +1,6 @@
+#!/usr/bin/gawk -f
+BEGIN { FS=","; print "["; }
+NR==1 { next }
+NR>2  { printf(","); }
+      { print "{\"type\":\"marker\",\"latLng\":{\"lat\":" $2 ",\"lng\":" $3 "},\"color\":\"#a24ac3\"}"; }
+END { print "]" }
