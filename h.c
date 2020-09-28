@@ -3,29 +3,32 @@
  * Searches a CSV database of points for a collection of triangles
  * suitable for homogeneous Ingress fielding.
  *
- * An homogeneous field plan of degree n ("Hn") is a field plan
- * where an Ingress player can construct an n-layer deep field
- * through splitting and layering of nodes within a single
- * enclosing triangle. Due to game limits, the maximally
- * densest construction possible in the game is an H5, but an
- * H4 is quite a respectable accomplishment too.
+ * HOMOGENOUS FIELDS
  *
- * An H1 field plan is just a single trianglular field. An Ingress
- * player stands at a vertex of the field plan and "throws" a link
- * to another vertex of the triangle. When the third link is thrown
- * the game creates a field and the player and the team receive points.
+ * An homogeneous field plan of degree n ("Hn") is a field plan
+ * that an Ingress player can use to construct an n-layer deep field
+ * through splitting and layering of nodes within a single
+ * enclosing triangle.
+ *
+ * The densest construction possible in the game is an H6.
+ *
+ * An H1 field plan or H1 for short is a simple, triangular field.
+ * An Ingress player stands at verticies of the field plan (each vertex is a
+ * real-world location) and "throws" a link (edge) to another vertex.
+ * When a new link forms a triangle, the game creates a "field" (or two)
+ * and the player and the team receive points.
  *
  * An H2 is constructed from an an H1 as follows. Find a new vertex C
- * within the H1 field plan, that forms a common vertex of three new H1
- * fields (each new triangles shares an edge of the original triangle).
- * The three new fields co-layer with the original field, and this
- * construction is called an H2 plan as each point in an H2 plan is
- * homogenously covered by two fields. An H2 plan consists of 4 verticies
- * and 3 interior H1 fields.
+ * within the H1 field plan. C is the common vertex of three new H1
+ * fields (triangles) sharing an edge with the original enclosing triangle.
+ * The three new fields co-layer with the original field's single layer,
+ * and the total construction is called an H2. Each point under an H2 is
+ * "homogenously" covered by two fields.
+ * An H2 plan always consists of 4 verticies and 3 interior H1 fields.
  *
  * For an H3 plan the process continues, finding new verticies
  * of each interior H1 such that what was previously an interior
- * H1 becomes an interior H2 plan. An H3 plan consists of
+ * H1 becomes an new interior H2 plan. Eventually an H3 is formed of
  * 7 vertices, 3 interior H2 fields and 9 interior H1 fields.
  *
  * In general, an Hn field contains 3**(n-1) H1 fields and
@@ -37,29 +40,28 @@
  *  H3      4
  *  H4     13
  *  H5     40
+ *  H6    121
  *
- * The practical game limit is H5, because an actual field play
- * requires the "throwing out" of a minimum (2**n)-1 outgoing links from
- * the final vertex, and the game limits that to 40. The normal limit
- * is 8, but the use of rare "SBULs" items increases that in steps of 8
- * up to a limit of 40. Other interior verticies of the higher Hn
- * fields can require more than 8 outgoing links, and so will need
- * SBULs during actual gameplay.
+ * SEARCH ALGORITHM
  *
- *  Plan  final-throws      #SBULs  max-throws
- *  H2    3                 0       8
- *  H3    7                 1       16
- *  H4    15                2       24
- *  H5    31                3       32 (needs 2 players)
- *  H6    63                4       40 (needs 2 players)
+ * This program searchs a fixed collection of verticies
+ * for a field plan of the specified depth.
+ * It works by:
+ *   - enumerating all possible triangles (counterclockwise)
+ *   - ignoring triangles that don't have the minimum interior
+ *     vertext requirement
+ *   - recursively choosing spliiting verticies until an Hn
+ *     field plan is complete; then the enclosing triangle is
+ *     printed with its field plan, and its estimated area.
  *
- * The centre node of an H5 is the apex of an H4, and so will need
- * its own SBULs.
- * Another trick in an H5 is to throw the first apex link *in*
- * so that only 32 out links are needed; ie 3 SBULs.
+ * A field is modeled as an array of triangles, ordered
+ * outside-in. It turns out that the three immediately
+ * interior sub-triangles of the i'th triangle will be at
+ * array elements i*3+1, i*3+2, i*3+3.
  *
- * This program starts with a fixed collection of verticies
- * and hunts for a field plan of the specified depth.
+ * The search algorithm recurses on the end segment of the array,
+ * incrementing i by one each descent, much the same was as
+ * a permuting or combinatoric search might.
  */
 
 #include <stdio.h>
@@ -117,6 +119,7 @@ angle_str(long a /* µ° */) {
  * - vector components are integers for speed
  * - portal lat/lng coordinates are trivially projected into
  *   the plane (cylindrical proj) with µ° precision.
+ *   (So this will be inaccurate for physically large distances)
  *
  * Note: Vectors are small structure values, and do not need
  * dynamic memory management. They can be passed and returned
@@ -163,17 +166,17 @@ vector_json(const vector a) {
 static double
 tri_area(const vector tri[static 3])
 {
-        /* If we imagine two sides of the triangle
-         * are co-planar in 3D, then their cross product
-         * will be the area of the parallelogram they
-         * span. Halve that to get the triangle area.
-         * For counterclockwise triangles, the magnitude
-         * will be negative. */
+	/* If we imagine two sides of the triangle
+	 * are co-planar 3D vectors, then their cross product
+	 * will be the area of the parallelogram they
+	 * span. Halve that to get the triangle area.
+	 * For counterclockwise triangles, the magnitude
+	 * will be negative, so we negate the product. */
 
-        vector ab = vector_sub(tri[1], tri[0]);
-        vector bc = vector_sub(tri[2], tri[1]);
-        /* Do calculation in floating because of overflow */
-        return -5e-7*ab.x*bc.y + 5e-7*ab.y*bc.x;
+	vector ab = vector_sub(tri[1], tri[0]);
+	vector bc = vector_sub(tri[2], tri[1]);
+	/* Do calculation in floating because of overflow */
+	return -5e-7*ab.x*bc.y + 5e-7*ab.y*bc.x;
 }
 
 /*------------------------------------------------------------
@@ -190,7 +193,8 @@ static void
 vset_setcap(vset **v, unsigned int newcap)
 {
 	*v = realloc(*v, sizeof (vset) + newcap * sizeof (vector));
-	if (!*v) err(1, "realloc");
+	if (!*v)
+		err(1, "realloc");
 	(*v)->cap = newcap;
 }
 
@@ -484,8 +488,8 @@ struct hfield {
 	} tri[];
 };
 
-#define MAXDEPTH 5
-#define MAXTRI   121		/* (3⁵-1)/2 */
+#define MAXDEPTH 6
+#define MAXTRI   (((3*3*3*3*3*3)-1)/2)	/* (3⁶-1)/2 */
 
 static unsigned int maxtri(unsigned int depth)
 {
