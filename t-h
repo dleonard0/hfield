@@ -1,8 +1,8 @@
 #!/bin/bash
 
-set -ex
+set -e
 
-# Find exactly one triangle; exercise edge cases of numbers
+echo "Expect exactly one triangle from an H1 + edge cases for number parsing"
 ./h -d 1 - <<'.' |
 "A",-180.000000,89.999999
 "B",0,-90.000000,foo
@@ -15,7 +15,7 @@ Found solution, area: 24254999820.000000
 ) - 
 
 
-# Find exactly the four triangles from four points
+echo "Expect exactly four H1s from four points"
 ./h -d 1 - <<'.' | grep '^\[' | sort |
 "A",1,2
 "B",2,2
@@ -27,5 +27,21 @@ diff -u <(cat<<'.'
 [{"type":"polygon","latLngs":[{"lat":1,"lng":1},{"lat":2,"lng":2},{"lat":2,"lng":1}],"color":"#a24ac3"}]
 [{"type":"polygon","latLngs":[{"lat":1,"lng":2},{"lat":2,"lng":2},{"lat":1,"lng":1}],"color":"#a24ac3"}]
 [{"type":"polygon","latLngs":[{"lat":1,"lng":2},{"lat":2,"lng":2},{"lat":2,"lng":1}],"color":"#a24ac3"}]
+.
+) -
+
+echo "Expect 10 H2 within the vertices of an H3"
+./h -d 2 - <<'.' | grep '^\[' | sort -u | wc -l |
+Name, Latitude, Longitude
+"A",-27.496334,153.179070,"",0
+"B",-27.511334,153.187730,"",0
+"C",-27.511334,153.170410,"",0
+"o",-27.506334,153.179070,"",0
+"oa",-27.504667,153.181957,"",0
+"ob",-27.509667,153.179070,"",0
+"oc",-27.504667,153.176183,"",0
+.
+diff -u <(cat<<-'.'
+	10
 .
 ) -
