@@ -1,8 +1,8 @@
 
-# Search for Ingress homogeneous fields
+# Search for Ingress homogeneous field plans
 
-This program searches a portal export file (CSV) for homogeneous fields
-of the given depth.
+This program searches a portal export file (CSV) for homogeneous field plans
+of the given layer depth.
 
 See https://www.youtube.com/watch?v=OvxD-iMgVPM for an introduction to homogeneous fields.
 
