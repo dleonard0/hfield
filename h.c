@@ -91,11 +91,11 @@ strlcat(char *d, const char *s, size_t dsz)
 #ifndef NDEBUG
 static int verbose_level = 0;
 # define verbose(...)  do { if (verbose_level)   fprintf(stderr, __VA_ARGS__); } while (0)
-# define verbose2(...) do { if (verbose_level>1) fprintf(stderr, __VA_ARGS__); } while (0)
+# define DEBUG(...)    do { if (verbose_level>1) fprintf(stderr, __VA_ARGS__); } while (0)
 #else
 # define verbose_level 0
 # define verbose(...)
-# define verbose2(...)
+# define DEBUG(...)
 #endif
 
 /* Convert an angle in microdegrees into a strict string form */
@@ -135,7 +135,9 @@ angle_str(long a /* µ° */) {
 typedef struct vector {
 	long x;	/* lat: µ°  -90000000 … +90000000 */
 	long y;	/* lng: µ° -180000000 …+180000000 */
+#ifndef NDEBUG
 	const char *name;
+#endif
 } vector;
 
 #define NULL_VECTOR (struct vector){ 0, 0 }
@@ -350,13 +352,10 @@ read_csv(FILE *f, const char *filename)
 
 		vector v;
 		const char *name = csv_string_field(&s);
-
-#if 0
-		char buf[1024];
-		snprintf(buf, sizeof buf, ":%u <%s>", lineno, name);
-		v.name = strdup(buf);
-#else
+#ifndef NDEBUG
 		v.name = strdup(name);
+#else
+		(void)name; /* avoid unused warning */
 #endif
 
 		if (!csv_angle_field(&s, &v.x) ||
@@ -389,17 +388,17 @@ vset_left_of(const vector a, const vector b, const vset *v)
 	vset *result = vset_new();
 	const vector ab = vector_sub(b, a);
 
-	verbose2("vset_left_of(%.10s,%.10s,<%u>) = [", a.name, b.name, v->len);
+	DEBUG("vset_left_of(%.10s,%.10s,<%u>) = [", a.name, b.name, v->len);
 	assert(ab.x || ab.y); /* same as assert(a != b) */
 
 	for (unsigned i = 0; i < v->len; i++) {
 		const vector ap = vector_sub(v->el[i], a);
 		if (is_leftward(ab, ap)) {
-			verbose2("%s%.10s", result->len?",":"", v->el[i].name);
+			DEBUG("%s%.10s", result->len?",":"", v->el[i].name);
 			vset_append(&result, v->el[i]);
 		}
 	}
-	verbose2("]\n");
+	DEBUG("]\n");
 	return result;
 }
 
@@ -619,7 +618,7 @@ print_solution(const struct hfield *h)
 	printf("Found solution, area: %f\n", tri_area(h->tri[0].v));
 	printf("[");
 	for (unsigned i = 0; i < h->ntri; i++) {
-		if (i) printf(",\n ");
+		if (i) printf(",");
 		printf("{\"type\":\"polygon\",\"latLngs\":[");
 		for (unsigned j = 0; j < 3; j++) {
 			if (j) printf(",");
@@ -651,15 +650,17 @@ rsearch(unsigned int const i, struct hfield *h)
 	const vector c = tri[i].v[2];
 	const vset *inner = tri[i].inner;
 
-	verbose2("%*srsearch(%u,) tri[%u]={%.10s,%.10s,%.10s",i,"",i,i,
+#ifndef NDEBUG
+	DEBUG("%*srsearch(%u,) tri[%u]={%.10s,%.10s,%.10s",i,"",i,i,
 		a.name, b.name, c.name);
 	if (verbose_level && inner) {
-		verbose2(",inner=[");
+		DEBUG(",inner=[");
 		for (unsigned l = 0; l < inner->len; l++)
-			verbose2("%s%.10s", l ? "," : "", inner->el[l].name);
-		verbose2("]");
+			DEBUG("%s%.10s", l ? "," : "", inner->el[l].name);
+		DEBUG("]");
 	}
-	verbose2("} min_interior[%u]=%u\n", i, min_interior[i]);
+	DEBUG("} min_interior[%u]=%u\n", i, min_interior[i]);
+#endif
 
 	if (!min_interior[i]) {
 		/* We have reached the first H1 subtri. Because all previous i
@@ -716,7 +717,7 @@ rsearch(unsigned int const i, struct hfield *h)
 			    mbc->inner->len < min_interior[3*i+2] ||
 			    mca->inner->len < min_interior[3*i+3])
 			{
-				verbose2("%*s distributed {%u,%u,%u} but need {%u+,%u+,%u+}\n",
+				DEBUG("%*s distributed {%u,%u,%u} but need {%u+,%u+,%u+}\n",
 					i, "", mab->inner->len, mbc->inner->len, mca->inner->len,
 					min_interior[3*i+1],min_interior[3*i+2],min_interior[3*i+3]);
 				continue;
@@ -792,32 +793,35 @@ main(int argc, char *argv[])
 		return 0;
 	}
 
+#ifndef NDEBUG
 	for (unsigned int i = 0; i < vs->len; i++)
-		verbose2("[%u] = %s\n", i, vector_str(vs->el[i]));
+		DEBUG("[%u] = %s\n", i, vector_str(vs->el[i]));
+#endif
 
 	/* Iterate over all triangles in the set just loaded */
 	struct tri_generator gen;
 	tri_generator_init(&gen, vs);
 
 	_Bool more;
-#pragma omp parallel private(more)
+
+#       pragma omp parallel private(more)
 	do {
 		struct hfield *h = NULL;
 
-#pragma omp critical
+#               pragma omp critical
 		{
 			vector bound[3];
 			more = tri_generator_next(&gen, bound);
 			if (more) {
-				if (verbose_level) {
-					verbose("%u/%u/%u:\n", gen.i, gen.j, gen.k);
-					verbose("  <%.16s,%.16s,%.16s>\n", bound[0].name, bound[1].name, bound[2].name);
-					verbose2("  %s\n", polygon_json(&bound[0], &bound[1], &bound[2], NULL));
-					verbose2("  inside: %u [", gen.inside->len);
-					for (unsigned l = 0; l < gen.inside->len; l++)
-						verbose2("%s%.16s", l ? "," : "", gen.inside->el[l].name);
-					verbose2("]\n");
-				}
+#ifndef NDEBUG
+				DEBUG("%u/%u/%u:\n", gen.i, gen.j, gen.k);
+				DEBUG("  <%.16s,%.16s,%.16s>\n", bound[0].name, bound[1].name, bound[2].name);
+				DEBUG("  %s\n", polygon_json(&bound[0], &bound[1], &bound[2], NULL));
+				DEBUG("  inside: %u [", gen.inside->len);
+				for (unsigned l = 0; l < gen.inside->len; l++)
+					DEBUG("%s%.16s", l ? "," : "", gen.inside->el[l].name);
+				DEBUG("]\n");
+#endif
 				if (gen.inside->len >= min_interior[0]) {
 					h = hfield_new(depth, bound[0], bound[1], bound[2], gen.inside);
 					gen.inside = NULL; /* because now h 'owns' it */
@@ -827,7 +831,7 @@ main(int argc, char *argv[])
 
 		if (h) {
 			if (rsearch(0, h)) {
-#pragma				omp critical
+#                               pragma omp critical
 				print_solution(h);
 			}
 			hfield_free(h);
