@@ -41,4 +41,4 @@ if __name__ == '__main__':
     printrow(tri[1],"B")
     printrow(tri[2],"C")
     if d > 1:
-        subtri(tri, "o", d - 1)
+        subtri(tri, "o", d - 2)
