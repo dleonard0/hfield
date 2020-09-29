@@ -4,6 +4,8 @@
 This program searches a portal export file (CSV) for homogeneous fields
 of the given depth.
 
+See https://www.youtube.com/watch?v=OvxD-iMgVPM for an introduction to homogeneous fields.
+
 ## Example
 
 For example, how many H2s in this demo.csv file of five portals?
